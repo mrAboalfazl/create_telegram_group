@@ -1,6 +1,6 @@
 import asyncio
 import os
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple, Dict, Any, Optional
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.errors import SessionPasswordNeededError
@@ -10,7 +10,6 @@ from sqlalchemy import select
 from src.utils import logger, now_utc, parse_admin_ids
 from src.kpi import my_stats
 from dotenv import load_dotenv
-from telethon.sessions import MemorySession
 
 load_dotenv()
 
@@ -35,21 +34,22 @@ async def init_db():
     try:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-        print("Database initialized successfully")
+        logger.info("db.init.success")
     except Exception as e:
-        print(f"Database initialization error: {e}")
+        logger.exception("db.init.error", error=str(e))
         raise
 
-bot = TelegramClient(MemorySession(), api_id, api_hash)  # bot session on disk
+# created and started inside main(), then handlers are registered
+bot: Optional[TelegramClient] = None
 
 def kb(rows: List[List[Tuple[str, str]]]):
     # simple inline keyboard helper
     from telethon import Button
     return [[Button.inline(text, data=data.encode()) for (text,data) in row] for row in rows]
 
-@bot.on(events.NewMessage(pattern="/start"))
 async def start(ev: events.NewMessage.Event):
     uid = ev.sender_id
+    logger.info("handler.start", user_id=uid)
     async with SessionLocal() as s:
         if not await s.get(User, uid):
             s.add(User(id=uid))
@@ -66,8 +66,8 @@ async def start(ev: events.NewMessage.Event):
         [("📊 آمار من", "stats")]
     ]))
 
-@bot.on(events.CallbackQuery(pattern=b"stats"))
 async def stats_cb(ev: events.CallbackQuery.Event):
+    logger.info("handler.stats", user_id=ev.sender_id)
     a, g, q, f = await my_stats(ev.sender_id)
     await ev.edit(f"📊 آمار شما:\n"
                   f"اکانت فعال: {a}\n"
@@ -75,16 +75,16 @@ async def stats_cb(ev: events.CallbackQuery.Event):
                   f"Jobهای در صف/اجرا: {q}\n"
                   f"شکست‌ها: {f}")
 
-@bot.on(events.CallbackQuery(pattern=b"add_account"))
 async def add_account_cb(ev: events.CallbackQuery.Event):
     uid = ev.sender_id
+    logger.info("handler.add_account.begin", user_id=uid)
     user_states[uid] = {"stage":"api_id","tmp":{}}
     await ev.respond("لطفاً `api_id` را بفرست.", parse_mode="md")
     await ev.answer()
 
-@bot.on(events.CallbackQuery(pattern=b"consent_yes"))
 async def consent_yes(ev: events.CallbackQuery.Event):
     uid = ev.sender_id
+    logger.info("handler.consent_yes", user_id=uid)
     st = user_states.get(uid)
     if not st or st.get("stage") not in ("consent",):
         await ev.answer("وضعیت نامعتبر. لطفاً دوباره از منو شروع کن.", alert=True)
@@ -98,8 +98,10 @@ async def consent_yes(ev: events.CallbackQuery.Event):
     client = TelegramClient(StringSession(), api_id, api_hash)
     await client.connect()
     try:
+        logger.info("login.send_code_request", user_id=uid, phone=phone)
         sent = await client.send_code_request(phone)
     except Exception as e:
+        logger.exception("login.send_code.error", user_id=uid, error=str(e))
         await ev.respond(f"ارسال کد ناموفق: {e}")
         await client.disconnect()
         return
@@ -113,14 +115,14 @@ async def consent_yes(ev: events.CallbackQuery.Event):
     await client.disconnect()
     await ev.answer()
 
-@bot.on(events.CallbackQuery(pattern=b"consent_no"))
 async def consent_no(ev: events.CallbackQuery.Event):
+    logger.info("handler.consent_no", user_id=ev.sender_id)
     user_states.pop(ev.sender_id, None)
     await ev.edit("لغو شد.")
 
-@bot.on(events.NewMessage())
 async def generic_inbox(ev: events.NewMessage.Event):
     uid = ev.sender_id
+    logger.info("handler.generic_inbox", user_id=uid)
     if uid not in user_states:
         return
     state = user_states[uid]
@@ -130,6 +132,7 @@ async def generic_inbox(ev: events.NewMessage.Event):
         try:
             state["tmp"]["api_id"] = int(ev.raw_text.strip())
         except:
+            logger.warning("login.api_id.invalid", user_id=uid, value=ev.raw_text.strip())
             await ev.respond("api_id عددی نیست. دوباره بفرست.")
             return
         state["stage"] = "api_hash"
@@ -153,6 +156,7 @@ async def generic_inbox(ev: events.NewMessage.Event):
                          buttons=kb([[("تایید", "consent_yes"), ("لغو", "consent_no")]]))
         state["tmp"]["phone"] = phone
         state["stage"] = "consent"
+        logger.info("login.phone.set", user_id=uid, phone=phone)
 
     elif stage == "await_code":
         code = ev.raw_text.strip()
@@ -171,6 +175,7 @@ async def generic_inbox(ev: events.NewMessage.Event):
         await client.connect()
         try:
             # try sign-in with code (pass phone_code_hash if available)
+            logger.info("login.sign_in.code", user_id=uid)
             await client.sign_in(phone=phone, code=code, phone_code_hash=phone_code_hash)
         except SessionPasswordNeededError:
             # keep session_str for password step and ask for 2FA password
@@ -180,6 +185,7 @@ async def generic_inbox(ev: events.NewMessage.Event):
             await client.disconnect()
             return
         except Exception as e:
+            logger.exception("login.sign_in.code.error", user_id=uid, error=str(e))
             await ev.respond(f"ورود ناموفق: {e}")
             await client.disconnect()
             return
@@ -203,6 +209,7 @@ async def generic_inbox(ev: events.NewMessage.Event):
             s.add(account)
             await s.commit()
 
+        logger.info("login.sign_in.success", user_id=uid)
         await ev.respond("✅ ورود موفق! اکانت شما ذخیره شد.")
         user_states.pop(uid, None)  # clear user state
         return
@@ -223,8 +230,10 @@ async def generic_inbox(ev: events.NewMessage.Event):
         await client.connect()
         try:
             # complete sign-in with password
+            logger.info("login.sign_in.password", user_id=uid)
             await client.sign_in(password=password)
         except Exception as e:
+            logger.exception("login.sign_in.password.error", user_id=uid, error=str(e))
             await ev.respond(f"رمز اشتباه یا ورود ناموفق: {e}")
             await client.disconnect()
             return
@@ -247,13 +256,14 @@ async def generic_inbox(ev: events.NewMessage.Event):
             s.add(account)
             await s.commit()
 
+        logger.info("login.sign_in.password.success", user_id=uid)
         await ev.respond("✅ ورود موفق با رمز دومرحله‌ای! اکانت شما ذخیره شد.")
         user_states.pop(uid, None)  # clear user state
         return
 
-@bot.on(events.CallbackQuery(pattern=b"sessions"))
 async def sessions_menu(ev: events.CallbackQuery.Event):
     uid = ev.sender_id
+    logger.info("handler.sessions_menu", user_id=uid)
     async with SessionLocal() as s:
         res = await s.execute(select(Account).where(Account.owner_id==uid))
         accounts = res.scalars().all()
@@ -266,9 +276,9 @@ async def sessions_menu(ev: events.CallbackQuery.Event):
         rows.append([(f"{a.phone} — {state}", f"acc_{a.id}")])
     await ev.respond("اکانت‌های شما:", buttons=kb(rows + [[("بازگشت", "back_home")]]))
 
-@bot.on(events.CallbackQuery(pattern=b"acc_"))
 async def account_actions(ev: events.CallbackQuery.Event):
     aid = int(ev.data.decode().split("_")[1])
+    logger.info("handler.account_actions", account_id=aid, user_id=ev.sender_id)
     buttons = kb([
         [("⏸ غیرفعال", f"acc_disable_{aid}"), ("▶️ فعال", f"acc_enable_{aid}")],
         [("🗑 حذف", f"acc_delete_{aid}")],
@@ -277,9 +287,9 @@ async def account_actions(ev: events.CallbackQuery.Event):
     ])
     await ev.respond(f"مدیریت اکانت #{aid}", buttons=buttons)
 
-@bot.on(events.CallbackQuery(pattern=b"acc_disable_"))
 async def acc_disable(ev: events.CallbackQuery.Event):
     aid = int(ev.data.decode().split("_")[2])
+    logger.info("handler.acc_disable", account_id=aid, user_id=ev.sender_id)
     async with SessionLocal() as s:
         a = await s.get(Account, aid)
         if a:
@@ -287,9 +297,9 @@ async def acc_disable(ev: events.CallbackQuery.Event):
             await s.commit()
     await ev.answer("اکانت غیرفعال شد.")
 
-@bot.on(events.CallbackQuery(pattern=b"acc_enable_"))
 async def acc_enable(ev: events.CallbackQuery.Event):
     aid = int(ev.data.decode().split("_")[2])
+    logger.info("handler.acc_enable", account_id=aid, user_id=ev.sender_id)
     async with SessionLocal() as s:
         a = await s.get(Account, aid)
         if a:
@@ -298,9 +308,9 @@ async def acc_enable(ev: events.CallbackQuery.Event):
             await s.commit()
     await ev.answer("اکانت فعال شد.")
 
-@bot.on(events.CallbackQuery(pattern=b"acc_delete_"))
 async def acc_delete(ev: events.CallbackQuery.Event):
     aid = int(ev.data.decode().split("_")[2])
+    logger.info("handler.acc_delete", account_id=aid, user_id=ev.sender_id)
     async with SessionLocal() as s:
         a = await s.get(Account, aid)
         if a:
@@ -308,10 +318,10 @@ async def acc_delete(ev: events.CallbackQuery.Event):
             await s.commit()
     await ev.answer("اکانت حذف شد.")
 
-@bot.on(events.CallbackQuery(pattern=b"acc_enqueue_"))
 async def acc_enqueue(ev: events.CallbackQuery.Event):
     from src.m_queue import schedule_next_for_account
     aid = int(ev.data.decode().split("_")[2])
+    logger.info("handler.acc_enqueue", account_id=aid, user_id=ev.sender_id)
     async with SessionLocal() as s:
         a = await s.get(Account, aid)
         if not a:
@@ -320,8 +330,8 @@ async def acc_enqueue(ev: events.CallbackQuery.Event):
         await schedule_next_for_account(s, a)
     await ev.answer("Job اضافه شد.")
 
-@bot.on(events.NewMessage(pattern="/my_stats"))
 async def my_stats_cmd(ev: events.NewMessage.Event):
+    logger.info("handler.my_stats", user_id=ev.sender_id)
     a,g,q,f = await my_stats(ev.sender_id)
     await ev.respond(f"📊 آمار شما:\n"
                      f"اکانت فعال: {a}\n"
@@ -329,24 +339,46 @@ async def my_stats_cmd(ev: events.NewMessage.Event):
                      f"Jobهای در صف/اجرا: {q}\n"
                      f"شکست‌ها: {f}")
 
+def register_handlers(c: TelegramClient) -> None:
+    # Register handlers programmatically
+    c.add_event_handler(start, events.NewMessage(pattern="/start"))
+    c.add_event_handler(stats_cb, events.CallbackQuery(pattern=b"stats"))
+    c.add_event_handler(add_account_cb, events.CallbackQuery(pattern=b"add_account"))
+    c.add_event_handler(consent_yes, events.CallbackQuery(pattern=b"consent_yes"))
+    c.add_event_handler(consent_no, events.CallbackQuery(pattern=b"consent_no"))
+    c.add_event_handler(generic_inbox, events.NewMessage())
+    c.add_event_handler(sessions_menu, events.CallbackQuery(pattern=b"sessions"))
+    c.add_event_handler(account_actions, events.CallbackQuery(pattern=b"acc_"))
+    c.add_event_handler(acc_disable, events.CallbackQuery(pattern=b"acc_disable_"))
+    c.add_event_handler(acc_enable, events.CallbackQuery(pattern=b"acc_enable_"))
+    c.add_event_handler(acc_delete, events.CallbackQuery(pattern=b"acc_delete_"))
+    c.add_event_handler(acc_enqueue, events.CallbackQuery(pattern=b"acc_enqueue_"))
+    c.add_event_handler(my_stats_cmd, events.NewMessage(pattern="/my_stats"))
+    logger.info("handlers.registered")
+
 async def main():
     try:
         await init_db()
-        print("Bot is starting...")
+        logger.info("bot.starting")
 
         if not BOT_TOKEN:
             raise RuntimeError("BOT_TOKEN not set in .env")
 
-        # start the module-level client so registered handlers are active
-        await bot.start(bot_token=BOT_TOKEN)
+        # create client with the running loop and then register handlers
+        loop = asyncio.get_running_loop()
+        c = TelegramClient("bot_session", api_id, api_hash, loop=loop)
+        await c.start(bot_token=BOT_TOKEN)
+        global bot
+        bot = c
+        register_handlers(c)
 
-        info = await bot.get_me()
-        print(f"Bot is running {info.username}")
+        info = await c.get_me()
+        logger.info("bot.running", username=info.username)
 
-        await bot.run_until_disconnected()
+        await c.run_until_disconnected()
         
     except Exception as e:
-        print(f"Bot startup error: {e}")
+        logger.exception("bot.startup.error", error=str(e))
         raise
 
 if __name__ == "__main__":
