@@ -4,7 +4,7 @@ from typing import List, Tuple, Dict, Any, Optional
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.errors import SessionPasswordNeededError
-from src.crypto import encrypt_str
+from src.crypto import encrypt_str, decrypt_str
 from src.models import SessionLocal, Base, engine, User, Account, Job, EventLog, GroupStat
 from sqlalchemy import select
 from src.utils import logger, now_utc, parse_admin_ids
@@ -83,8 +83,23 @@ async def stats_cb(ev: events.CallbackQuery.Event):
 async def add_account_cb(ev: events.CallbackQuery.Event):
     uid = ev.sender_id
     logger.info("handler.add_account.begin", user_id=uid)
-    user_states[uid] = {"stage":"api_id","tmp":{}}
-    await ev.respond("لطفاً `api_id` را بفرست.", parse_mode="md")
+    # اگر کاربر قبلاً اکانتی دارد، از همان api_id/api_hash ذخیره‌شده استفاده کن
+    async with SessionLocal() as s:
+        res = await s.execute(select(Account).where(Account.owner_id==uid))
+        first_acc = res.scalars().first()
+    if first_acc:
+        try:
+            preset_api_id = int(first_acc.api_id)
+            preset_api_hash = decrypt_str(first_acc.api_hash_enc)
+            user_states[uid] = {"stage":"phone","tmp":{"api_id":preset_api_id,"api_hash":preset_api_hash}}
+            await ev.respond("شمارهٔ تلفن را با کد کشور بفرست (مثلاً +98912xxxxxxx).\n(از api_id/api_hash قبلی شما استفاده می‌شود.)")
+        except Exception as e:
+            logger.warning("add_account.reuse_source.error", user_id=uid, error=str(e))
+            user_states[uid] = {"stage":"api_id","tmp":{}}
+            await ev.respond("لطفاً `api_id` را بفرست.", parse_mode="md")
+    else:
+        user_states[uid] = {"stage":"api_id","tmp":{}}
+        await ev.respond("لطفاً `api_id` را بفرست.", parse_mode="md")
     await ev.answer()
 
 async def consent_yes(ev: events.CallbackQuery.Event):
