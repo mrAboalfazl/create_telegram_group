@@ -1,0 +1,56 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+.venv*/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+*.spec
+
+# Test / coverage
+.pytest_cache/
+.cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# IDE / editor
+.vscode/
+.idea/
+*.code-workspace
+
+# Logs
+logs/
+*.log
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Databases
+data.db
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+
+# Sessions / secrets (Telethon)
+*.session
+bot_session.session
+bot.session
+
+# Services
+*.service
+
+# Explicitly allow env file
+!.env
+
