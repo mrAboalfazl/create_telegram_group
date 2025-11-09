@@ -395,7 +395,8 @@ def register_handlers(c: TelegramClient) -> None:
     c.add_event_handler(consent_no, events.CallbackQuery(pattern=b"consent_no"))
     c.add_event_handler(generic_inbox, events.NewMessage())
     c.add_event_handler(sessions_menu, events.CallbackQuery(pattern=b"sessions"))
-    c.add_event_handler(account_actions, events.CallbackQuery(pattern=b"acc_"))
+    # only match plain acc_<id>, avoid matching acc_disable_/acc_enable_/acc_enqueue_
+    c.add_event_handler(account_actions, events.CallbackQuery(pattern=b"^acc_\\d+$"))
     c.add_event_handler(acc_disable, events.CallbackQuery(pattern=b"acc_disable_"))
     c.add_event_handler(acc_enable, events.CallbackQuery(pattern=b"acc_enable_"))
     c.add_event_handler(acc_delete, events.CallbackQuery(pattern=b"acc_delete_"))

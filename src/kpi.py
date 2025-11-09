@@ -1,6 +1,6 @@
 from sqlalchemy import select, func, text
 from .models import SessionLocal, Account, GroupStat, Job
-from datetime import timedelta
+from datetime import timedelta, timezone
 from .utils import now_utc
 from typing import Optional
 
@@ -32,7 +32,11 @@ async def my_stats(owner_id: int):
         next_dt = q_next.scalar_one()
         next_minutes: Optional[int] = None
         if next_dt is not None:
-            delta = (next_dt - now_utc()).total_seconds()
+            # normalize naive datetimes to UTC to avoid naive/aware subtraction errors (SQLite)
+            dt = next_dt
+            if getattr(dt, "tzinfo", None) is None or dt.tzinfo.utcoffset(dt) is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            delta = (dt - now_utc()).total_seconds()
             next_minutes = max(0, int((delta + 59) // 60))  # ceil to minutes
 
         return active_accounts, groups_24h, jobs_q, jobs_failed, next_minutes
