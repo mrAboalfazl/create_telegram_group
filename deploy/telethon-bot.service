@@ -1,0 +1,21 @@
+[Unit]
+Description=Telethon Bot (long polling)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/create_telegram_group
+
+SyslogIdentifier=telethon-bot
+Environment="PYTHONUNBUFFERED=1"
+EnvironmentFile=-/opt/create_telegram_group/.env
+
+ExecStart=/opt/create_telegram_group/.venv/bin/python3.8 -m bot
+
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+
+

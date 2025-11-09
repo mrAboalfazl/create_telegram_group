@@ -50,6 +50,7 @@ bot.session
 
 # Services
 *.service
+!deploy/*.service
 
 # Explicitly allow env file
 !.env

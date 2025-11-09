@@ -1,0 +1,26 @@
+[Unit]
+Description=Telethon Worker (create groups)
+After=network.target
+
+[Service]
+Type=simple
+# مسیر پروژه را تنظیم کنید
+WorkingDirectory=/opt/create_telegram_group
+
+# لاگ‌ها در journalctl
+SyslogIdentifier=telethon-worker
+Environment="PYTHONUNBUFFERED=1"
+
+# اگر .env دارید این مسیر را تنظیم کنید
+EnvironmentFile=-/opt/create_telegram_group/.env
+
+# مسیر venv و اجرای ورکر
+ExecStart=/opt/create_telegram_group/.venv/bin/python3.8 -m src.worker
+
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+
+
