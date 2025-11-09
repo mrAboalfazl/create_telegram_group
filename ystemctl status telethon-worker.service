@@ -1,0 +1,22 @@
+[0;1;32m●[0m telethon-bot.service - Telethon Group Bot
+     Loaded: loaded (/etc/systemd/system/telethon-bot.service; enabled; vendor preset: enabled)
+     Active: [0;1;32mactive (running)[0m since Sun 2025-10-19 20:04:24 UTC; 755ms ago
+   Main PID: 1072782 (python)
+      Tasks: 1 (limit: 2261)
+     Memory: 42.2M
+     CGroup: /system.slice/telethon-bot.service
+             └─1072782 /root/telethon-group-bot/.venv/bin/python -m src.bot
+
+Oct 19 20:04:24 TH12-02-22-24-27 systemd[1]: Started Telethon Group Bot.
+Oct 19 20:04:25 TH12-02-22-24-27 python[1072782]: Traceback (most recent call last):
+Oct 19 20:04:25 TH12-02-22-24-27 python[1072782]:   File "/usr/lib/python3.8/runpy.py", line 194, in _run_module_as_main
+Oct 19 20:04:25 TH12-02-22-24-27 python[1072782]:     return _run_code(code, main_globals, None,
+Oct 19 20:04:25 TH12-02-22-24-27 python[1072782]:   File "/usr/lib/python3.8/runpy.py", line 87, in _run_code
+Oct 19 20:04:25 TH12-02-22-24-27 python[1072782]:     exec(code, run_globals)
+Oct 19 20:04:25 TH12-02-22-24-27 python[1072782]:   File "/root/telethon-group-bot/src/bot.py", line 7, in <module>
+Oct 19 20:04:25 TH12-02-22-24-27 python[1072782]:     from .models import SessionLocal, Base, engine, User, Account, Job, EventLog, GroupStat
+Oct 19 20:04:25 TH12-02-22-24-27 python[1072782]:   File "/root/telethon-group-bot/src/models.py", line 12, in <module>
+Oct 19 20:04:25 TH12-02-22-24-27 python[1072782]:     class User(Base):
+Oct 19 20:04:25 TH12-02-22-24-27 python[1072782]:   File "/root/telethon-group-bot/src/models.py", line 16, in User
+Oct 19 20:04:25 TH12-02-22-24-27 python[1072782]:     accounts: Mapped[list["Account"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
+Oct 19 20:04:25 TH12-02-22-24-27 python[1072782]: TypeError: 'type' object is not subscriptable
