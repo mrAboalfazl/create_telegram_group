@@ -23,9 +23,10 @@ TARGET_PER_24H = int(os.getenv("TARGET_PER_24H", "48"))
 SCHEDULE_JITTER_SECONDS = int(os.getenv("SCHEDULE_JITTER_SECONDS", "300"))  # پیش‌فرض 5 دقیقه
 
 def _compute_delay_seconds() -> int:
-    \"\"\"Deterministic interval based on TARGET_PER_24H with symmetric jitter.
+    """
+    Deterministic interval based on TARGET_PER_24H with symmetric jitter.
     Falls back to MIN/MAX when TARGET_PER_24H <= 0.
-    \"\"\"
+    """
     if TARGET_PER_24H and TARGET_PER_24H > 0:
         base = int(math.ceil(86400 / TARGET_PER_24H))
         j = jitter(SCHEDULE_JITTER_SECONDS)
