@@ -9,6 +9,7 @@ from telethon.errors import FloodWaitError, SessionPasswordNeededError, RPCError
 from .models import Job, Account, GroupStat, EventLog , SessionLocal
 from .crypto import decrypt_str
 from .utils import now_utc, jitter, rand_delay, logger
+import math
 import asyncio
 import random
 import os
@@ -18,6 +19,24 @@ MAX_DELAY = int(os.getenv("MAX_DELAY_SECONDS", "3600"))
 MAX_ATTEMPTS = int(os.getenv("MAX_ATTEMPTS_PER_GROUP", "3"))
 FLOODWAIT_THRESHOLD = int(os.getenv("FLOODWAIT_THRESHOLD_SECONDS_PER_24H", "3600"))
 GROUP_PREFIX = os.getenv("GROUP_TITLE_PREFIX", "")
+TARGET_PER_24H = int(os.getenv("TARGET_PER_24H", "48"))
+SCHEDULE_JITTER_SECONDS = int(os.getenv("SCHEDULE_JITTER_SECONDS", "300"))  # پیش‌فرض 5 دقیقه
+
+def _compute_delay_seconds() -> int:
+    \"\"\"Deterministic interval based on TARGET_PER_24H with symmetric jitter.
+    Falls back to MIN/MAX when TARGET_PER_24H <= 0.
+    \"\"\"
+    if TARGET_PER_24H and TARGET_PER_24H > 0:
+        base = int(math.ceil(86400 / TARGET_PER_24H))
+        j = jitter(SCHEDULE_JITTER_SECONDS)
+        # symmetric jitter: +/- j
+        if random.randint(0, 1) == 0:
+            delay = base + j
+        else:
+            delay = max(1, base - j)
+        return delay
+    # fallback legacy random window
+    return rand_delay(MIN_DELAY, MAX_DELAY)
 
 from telethon import TelegramClient
 from telethon.sessions import StringSession
@@ -41,7 +60,7 @@ async def lease_next_job(session: AsyncSession) ->Optional[Job] :
     return job
 
 async def schedule_next_for_account(session: AsyncSession, account: Account):
-    delay = rand_delay(MIN_DELAY, MAX_DELAY)
+    delay = _compute_delay_seconds()
     # Enqueue new job
     j = Job(
         account_id=account.id,
