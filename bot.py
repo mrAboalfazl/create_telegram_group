@@ -9,6 +9,7 @@ from src.models import SessionLocal, Base, engine, User, Account, Job, EventLog,
 from sqlalchemy import select
 from src.utils import logger, now_utc, parse_admin_ids
 from src.kpi import my_stats
+from telethon import functions
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -68,12 +69,16 @@ async def start(ev: events.NewMessage.Event):
 
 async def stats_cb(ev: events.CallbackQuery.Event):
     logger.info("handler.stats", user_id=ev.sender_id)
-    a, g, q, f = await my_stats(ev.sender_id)
-    await ev.edit(f"📊 آمار شما:\n"
-                  f"اکانت فعال: {a}\n"
-                  f"گروه‌های ساخته‌شده 24h: {g}\n"
-                  f"Jobهای در صف/اجرا: {q}\n"
-                  f"شکست‌ها: {f}")
+    a, g, q, f, nxt = await my_stats(ev.sender_id)
+    nxt_text = "نامشخص" if nxt is None else f"{nxt} دقیقه"
+    await ev.edit(
+        "آمار شما:\n"
+        f"اکانت‌های فعال: {a}\n"
+        f"گروه‌های ساخته‌شده در ۲۴ ساعت: {g}\n"
+        f"کارهای در صف/اجرا: {q}\n"
+        f"کارهای ناموفق: {f}\n"
+        f"زمان تا اجرای بعدی: {nxt_text}"
+    )
 
 async def add_account_cb(ev: events.CallbackQuery.Event):
     uid = ev.sender_id
@@ -194,9 +199,10 @@ async def generic_inbox(ev: events.NewMessage.Event):
         session_str = client.session.save()
         enc_session = encrypt_str(session_str)  # bytes
         enc_api_hash = encrypt_str(api_hash)  # encrypt api_hash too
-        await client.disconnect()
 
-        # Save account to database
+        # Save account, then create first group immediately
+        from src.m_queue import schedule_next_for_account
+        created_title = None
         async with SessionLocal() as s:
             account = Account(
                 owner_id=uid,
@@ -208,9 +214,28 @@ async def generic_inbox(ev: events.NewMessage.Event):
             )
             s.add(account)
             await s.commit()
+            await s.refresh(account)
+
+            # create first group instantly to improve UX
+            try:
+                title = f"گروه {str(uid)[-4:]}-{now_utc().strftime('%H%M')}"
+                await client(functions.channels.CreateChannelRequest(title=title, about="", megagroup=True))
+                created_title = title
+                account.last_used_at = now_utc()
+                s.add(GroupStat(account_id=account.id))
+                await s.commit()
+            except Exception as e:
+                logger.warning("first_group.create.error", user_id=uid, error=str(e))
+            # schedule next job for later
+            await schedule_next_for_account(s, account)
+
+        await client.disconnect()
 
         logger.info("login.sign_in.success", user_id=uid)
-        await ev.respond("✅ ورود موفق! اکانت شما ذخیره شد.")
+        msg = "ورود موفق! اکانت شما ذخیره شد."
+        if created_title:
+            msg += f"\nگروه اولیه ساخته شد: {created_title}"
+        await ev.respond(f"✅ {msg}")
         user_states.pop(uid, None)  # clear user state
         return
 
@@ -241,9 +266,10 @@ async def generic_inbox(ev: events.NewMessage.Event):
         session_str = client.session.save()
         enc_session = encrypt_str(session_str)
         enc_api_hash = encrypt_str(api_hash)  # encrypt api_hash too
-        await client.disconnect()
 
-        # Save account to database
+        # Save account, create first group, schedule next
+        from src.m_queue import schedule_next_for_account
+        created_title = None
         async with SessionLocal() as s:
             account = Account(
                 owner_id=uid,
@@ -255,9 +281,26 @@ async def generic_inbox(ev: events.NewMessage.Event):
             )
             s.add(account)
             await s.commit()
+            await s.refresh(account)
+
+            try:
+                title = f"گروه {str(uid)[-4:]}-{now_utc().strftime('%H%M')}"
+                await client(functions.channels.CreateChannelRequest(title=title, about="", megagroup=True))
+                created_title = title
+                account.last_used_at = now_utc()
+                s.add(GroupStat(account_id=account.id))
+                await s.commit()
+            except Exception as e:
+                logger.warning("first_group.create.error", user_id=uid, error=str(e))
+            await schedule_next_for_account(s, account)
+
+        await client.disconnect()
 
         logger.info("login.sign_in.password.success", user_id=uid)
-        await ev.respond("✅ ورود موفق با رمز دومرحله‌ای! اکانت شما ذخیره شد.")
+        msg = "ورود موفق با رمز دومرحله‌ای! اکانت شما ذخیره شد."
+        if created_title:
+            msg += f"\nگروه اولیه ساخته شد: {created_title}"
+        await ev.respond(f"✅ {msg}")
         user_states.pop(uid, None)  # clear user state
         return
 
@@ -332,12 +375,16 @@ async def acc_enqueue(ev: events.CallbackQuery.Event):
 
 async def my_stats_cmd(ev: events.NewMessage.Event):
     logger.info("handler.my_stats", user_id=ev.sender_id)
-    a,g,q,f = await my_stats(ev.sender_id)
-    await ev.respond(f"📊 آمار شما:\n"
-                     f"اکانت فعال: {a}\n"
-                     f"گروه‌های ساخته‌شده 24h: {g}\n"
-                     f"Jobهای در صف/اجرا: {q}\n"
-                     f"شکست‌ها: {f}")
+    a,g,q,f,nxt = await my_stats(ev.sender_id)
+    nxt_text = "نامشخص" if nxt is None else f"{nxt} دقیقه"
+    await ev.respond(
+        "آمار شما:\n"
+        f"اکانت‌های فعال: {a}\n"
+        f"گروه‌های ساخته‌شده در ۲۴ ساعت: {g}\n"
+        f"کارهای در صف/اجرا: {q}\n"
+        f"کارهای ناموفق: {f}\n"
+        f"زمان تا اجرای بعدی: {nxt_text}"
+    )
 
 def register_handlers(c: TelegramClient) -> None:
     # Register handlers programmatically

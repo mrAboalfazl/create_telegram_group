@@ -2,6 +2,7 @@ from sqlalchemy import select, func, text
 from .models import SessionLocal, Account, GroupStat, Job
 from datetime import timedelta
 from .utils import now_utc
+from typing import Optional
 
 async def my_stats(owner_id: int):
     async with SessionLocal() as s:
@@ -22,4 +23,16 @@ async def my_stats(owner_id: int):
         q_fail = await s.execute(select(func.count()).select_from(Job).join(Account, Account.id==Job.account_id).where(Account.owner_id==owner_id, Job.status=="failed"))
         jobs_failed = q_fail.scalar_one()
 
-        return active_accounts, groups_24h, jobs_q, jobs_failed
+        # next run eta (minutes) across queued jobs for this owner
+        q_next = await s.execute(
+            select(func.min(Job.next_run_at)).select_from(Job).join(Account, Account.id==Job.account_id).where(
+                Account.owner_id==owner_id, Job.status=="queued"
+            )
+        )
+        next_dt = q_next.scalar_one()
+        next_minutes: Optional[int] = None
+        if next_dt is not None:
+            delta = (next_dt - now_utc()).total_seconds()
+            next_minutes = max(0, int((delta + 59) // 60))  # ceil to minutes
+
+        return active_accounts, groups_24h, jobs_q, jobs_failed, next_minutes
